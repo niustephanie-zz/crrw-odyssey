@@ -1,0 +1,329 @@
+<!doctype><html><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Odyssey.js Scroll</title>
+  <meta name="description" content="">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="icon" type="image/x-icon" href="http://cartodb.github.io/odyssey.js/sandbox/favicon.png">
+  <link rel="icon" type="image/png" href="http://cartodb.github.io/odyssey.js/sandbox/favicon.png">
+
+  <link rel="stylesheet" href="cartodb.css">
+  <link rel="stylesheet" href="scroll.css">
+  <script src="http://cartodb.github.io/odyssey.js/vendor/modernizr-2.6.2.min.js"></script>
+</head>
+<body>
+  <div id="layout">
+    <!--<div class="progress-bar"></div>-->
+
+    <div class="inner-header">
+      <div id="header"></div>
+    </div>
+
+    <div id="map_pos">
+      <div id="map_container">
+        <div id="map"></div>
+      </div>
+    </div>
+
+    <div id="content"></div>
+
+    <div id="credits">
+      <span class="title" id="title">Title</span>
+      <span class="author"><b id="author">By Name using</b> <a href="#">Odyssey.js</a><span>
+    </span></span></div>
+  </div> <!-- layout -->
+
+  <script src="http://cartodb-libs.global.ssl.fastly.net/cartodb.js/v3/cartodb.js"></script>
+  <script src="http://cartodb.github.io/odyssey.js/dist/odyssey.js" charset="UTF-8"></script>
+
+  <script>
+    O.Template({
+      init: function() {
+        var baseurl = this.baseurl = 'http://{s}.api.cartocdn.com/base-light/{z}/{x}/{y}.png';
+        var map = this.map = L.map('map',{
+          center: [0, 0],
+          zoom: 4
+        });
+
+        this.map.scrollWheelZoom.disable();
+
+        var basemap = this.basemap = L.tileLayer(baseurl, {
+          attribution: 'data OSM - map CartoDB'
+        }).addTo(map);
+
+        var story = O.Story()
+
+        this.story = story;
+        this.miniprogressbar = O.MiniProgressBar();
+
+        // trigger when  map_pos go out of the screen
+        this.edge = O.Edge(
+          O.Triggers.Scroll().less('map_pos').offset(0),
+          O.Triggers.Scroll().greater('map_pos').offset(0)
+        )
+      },
+
+      update: function(actions) {
+        var self = this;
+
+        this.story.clear();
+
+        if (this.baseurl && (this.baseurl !== actions.global.baseurl)) {
+          this.baseurl = actions.global.baseurl || 'http://0.api.cartocdn.com/base-light/{z}/{x}/{y}.png';
+
+          this.basemap.setUrl(this.baseurl);
+        }
+
+        if (this.cartoDBLayer && ("http://"+self.cartoDBLayer.options.user_name+".cartodb.com/api/v2/viz/"+self.cartoDBLayer.options.layer_definition.stat_tag+"/viz.json" !== actions.global.vizjson)) {
+          this.map.removeLayer(this.cartoDBLayer);
+
+          this.cartoDBLayer = null;
+          this.created = false;
+        }
+
+        if (actions.global.vizjson && !this.cartoDBLayer) {
+          if (!this.created) { // sendCode debounce < vis loader
+            cdb.vis.Loader.get(actions.global.vizjson, function(vizjson) {
+              self.map.fitBounds(vizjson.bounds);
+
+              cartodb.createLayer(self.map, vizjson)
+                .done(function(layer) {
+                  self.cartoDBLayer = layer;
+
+                  //new part
+                    layer.on('featureClick', function(e, latlng, pos, data, layer) {
+                    alert("mouse clicked polygon with data: " + latlong);
+                    console.log(data);
+                  });
+  
+
+                  var sublayer = layer.getSubLayer(0),
+                      layer_name = layer.layers[0].options.layer_name,
+                      filter = actions.global.cartodb_filter ? " WHERE "+actions.global.cartodb_filter : "";
+
+                  sublayer.setSQL("SELECT * FROM "+layer_name+filter)
+
+                  self.map.addLayer(layer);
+
+                  self._resetActions(actions);
+                }).on('error', function(err) {
+                  console.log("some error occurred: " + err);
+                });
+            });
+
+            this.created = true;
+          }
+
+          return;
+        }
+
+        this._resetActions(actions);
+      },
+
+      _resetActions: function(actions) {
+        // update footer title and author
+        var title_ = actions.global.title === undefined ? '' : actions.global.title,
+            author_ = actions.global.author === undefined ? 'Using' : 'By '+actions.global.author+' using';
+
+        document.getElementById('title').innerHTML = title_;
+        document.getElementById('author').innerHTML = author_;
+        document.title = title_ + " | " + author_ +' Odyssey.js';
+
+        var TRIGGER_LINE = this.map.getSize().y + 50;
+        this.story.addEvent(
+          this.edge,
+          O.Parallel(
+            O.Actions.CSS($('#map_container')).toggleClass('attachTop'),
+            O.Actions.CSS($('#content')).toggleClass('attachMap'),
+            O.Actions.Debug().log('attach')
+          )
+        )
+
+        // create content
+        var content = '';
+
+        var slide_ = actions[0];
+        $('#header').html(slide_.html());
+
+        this.story
+          .addState(
+            O.Scroll().within($('#header')),
+            slide_(this)
+          );
+
+        for(var i = 1; i < actions.length; ++i) {
+          var slide = actions[i];
+          content += "<div id='s_" + i +"'>" + slide.html() + "</div>";
+        }
+
+        $('#content').html(content);
+
+        // first slide is the header, skip it
+        for(var i = 1; i < actions.length; ++i) {
+          var slide = actions[i];
+          this.story.addState(
+            O.Triggers.Scroll().within('s_' + i).offset(TRIGGER_LINE),
+            O.Parallel(
+              slide(this),
+              this.miniprogressbar.percent(100*i/(actions.length - 1))
+            )
+          )
+        }
+
+        if(window.scrollY === 0) {
+          this.story.go(0);
+        }
+      }
+    });
+  </script>
+
+  <script>
+    (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+    (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+    m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+    })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+    ga('create', 'UA-20934186-21', 'cartodb.github.io');
+    ga('send', 'pageview');
+  </script>
+
+
+<script id="md_template" type="text/template">```
+-title: "CRRW PROJECT testing"
+-author: "Yue Li"
+- cartodb_filter: "column='VALUE'"
+```
+
+#CHINESE RAILROAD WORKERS DEMO
+```
+- center: [38.5906,-121.4503]
+L.marker([38.5906,-121.4503]).actions.addRemove(S.map)
+```
+
+#Sacramento
+```
+- center: [38.5906,-121.4503]
+- zoom: 6
+L.marker([38.5906,-121.4503]).actions.addRemove(S.map)
+```
+
+![Sacramento](https://stanford.app.box.com/representation/file_version_157468831973/image_2048/1.png)
+
+Ground was broken in Sacramento at Front and K Street on January 8, 1863 to begin construction of the Central Pacific Railroad, the western link of the first transcontinental railroad. The Central Pacific would extend East from Sacramento across the Sierras and Nevada to meet the Union Pacific which stretched West through the plains from Omaha, Nebraska. 
+
+At the start of construction they had no plans to hire Chinese workers. Leland Stanford, president of the CPRR, had been elected governor on an anti-Chinese immigration program, declaring to the state legislature a year earlier, “The presence of numbers of that degraded and distinct people [Chinese] would exercise a deleterious effect upon the superior race.” [Asbury, Barbary Coast 145]
+
+
+#Bloomer Cut
+```
+- center: [38.8780714, -121.0857725]
+L.marker([38.8780714, -121.0857725]).actions.addRemove(S.map)
+- zoom: 6
+```
+![Bloomer Cut](https://stanford.app.box.com/representation/file_version_157468782092/image_2048/1.png)
+In early 1864 workers began blasting and digging through steep terrain on the Bloomer Ranch near Auburn, California, to create a level grade for tracks. Bloomer Cut, 38 miles from Sacramento, ended up being 800 feet long and 63 feet high, and workers dug a trough through naturally cemented gravel and hard clay with picks, shovels and black powder. This was the first major engineering challenge for the railroad, and it was dangerous work. 
+
+A shortage of labor worried the managers of the Central Pacific, the “Associates” (also known as the Big Four: Charles Crocker, Collis Huntington, Mark Hopkins and Leland Stanford with other friends and relatives), and they worried about the daunting challenge of building a railroad over the rugged Sierra Nevada. 
+
+Payroll records for January 1864 show that the Central Pacific hired a crew of 21 Chinese workers and hired more during that year. At least some may have worked at Bloomer Cut by the time it was completed in March 1865. 
+
+
+#Cape Horn
+```
+- center: [39.1128, -120.9328]
+L.marker([39.1128, -120.9328]).actions.addRemove(S.map)
+- zoom: 6
+```
+![Cape Horn](https://stanford.app.box.com/representation/file_version_157468807727/image_2048/1.png)
+
+In the summer of 1865 the railroad builders faced one of their biggest challenges, a roadbed curving around a mountain high in the Sierras. Construction begins at this site, named Cape Horn after the treacherous route for ships sailing around the tip of South America. It took the mostly Chinese workforce a year to blast out a three-mile roadbed curving along steep terrain of the Sierra Nevada at least 1300 feet high above the American River. Hundreds of kegs of black blasting powder were used to form a ledge from which a level roadbed could then be laid. 
+
+#Dutch Flat
+```
+- center: [39.2, -120.82]
+L.marker([39.2, -120.82]).actions.addRemove(S.map)
+- zoom: 6
+```
+![Dutch Flat](https://stanford.app.box.com/representation/file_version_157468821032/image_2048/1.png)
+
+Chinese hired in 1864 also worked on the Dutch Flat-Donner Lake wagon road. This road was necessary in order to haul up supplies for grading the railroad bed and laying tracks.
+
+#Summit Tunnel
+```
+- center: [39.3133, -120.3122]
+L.marker([39.3133, -120.3122]).actions.addRemove(S.map)
+- zoom: 6
+```
+![Summit Tunnel]()
+
+In fall 1865 Chinese workers began building 15 tunnels, most of them at high elevations through the Sierra Nevada, for a total of 6,213 feet. The most difficult was No. 6, the Summit Tunnel, cut through solid granite, 1,695 feet long and 124 feet below the surface. [doc] Progress was very slow, with many kegs of black powder used each day, but to little effect in the hard rock. Nitroglycerin was mixed on site, but it was very unstable and dangerous. 
+
+Workers built a vertical shaft halfway between the two tunnel openings, and in shifts around the clock they dug four faces simultaneously, from both exterior sides and from inside out. Work continued through two of the harshest winters on record. Snow from fierce blizzards often blocked tunnel entrances, and the workers shoveled out tunnels through the snow, as much as 500 hundred feet long, they dug open windows, and they rested and ate in their white ice caves after spending their shifts in the dark of the mountain.
+
+The Summit Tunnel was completed, graded and track laid on November 30, 1867. Because of the severe winter storms, the Central Pacific built 37 miles of snow sheds to cover the tracks in 1868 and 1869. The snow sheds were nicknamed the “longest barn in the world.”
+
+#Reno
+```
+- center: [39.5281, -119.8147]
+L.marker([39.5281, -119.8147]).actions.addRemove(S.map)
+- zoom: 6
+```
+![Reno](https://stanford.app.box.com/representation/file_version_157468789985/image_2048/1.png)
+
+Once out of the Sierras, the railroad reaches the new town of Reno. 
+
+They move across the Nevada dessert and northern Utah, building at a fast pace.
+
+
+#Winnemucca
+```
+- center: [40.9672, -117.7333]
+L.marker([40.9672, -117.7333]).actions.addRemove(S.map)
+- zoom: 6
+```
+![Winnemucca](https://stanford.app.box.com/representation/file_version_157468815697/image_2048/1.png)
+
+#Humboldt Wells
+```
+- center: [41.107469, -114.956706]
+L.marker([41.107469, -114.956706]).actions.addRemove(S.map)
+- zoom: 6
+```
+![Humboldt Wells](https://stanford.app.box.com/representation/file_version_157468823765/image_2048/1.png)
+
+#10 Miles in One Day
+```
+- center: [41.6142,-112.7031]
+L.marker([41.6142, -112.7031]).actions.addRemove(S.map)
+- zoom: 6
+```
+![10 Miles in One Day](https://stanford.app.box.com/representation/file_version_157468788639/image_2048/1.png)
+
+As they approached where the Central Pacific would connect with the Union Pacific at Promontory Summit, Utah, they learned that the Union Pacific set a record, laying six miles of track in one day. Charles Crocker made a $10,000 wager with Thomas Durant of the Union Pacific, betting that his workers could surpass six miles in one day. 
+
+On April 28, 1869, a squad of eight Irish rail-handlers and a small army of thousands of Chinese workers accomplish the feat, working between 5 a.m. and 7 p.m., with a mid-day break after laying six miles of track. At the end of the day they reach 10 miles and fifty-six feet.
+
+The names of the eight Irish workers are recorded by the railroad; they are taken to Sacramento to be cheered in a parade. None of the Chinese workers’ names are recorded.
+
+#Promontory Summit
+```
+- center: [41.6178,-112.6014]
+L.marker([41.6178,-112.6014]).actions.addRemove(S.map)
+- zoom: 6
+```
+![Promontory Summit](https://stanford.app.box.com/representation/file_version_157468805725/image_2048/1.png)
+
+Finally, the Central Pacific and the Union Pacific met; the continent had been spanned; the Atlantic and Pacific were linked, and on May 10, 1869 they celebrated. Many of the Chinese and Irish workers on the Central Pacific were laid off, now that the two lines met, but the rest of them camp miles from the celebration at a camp site called Victory. Some Chinese workers remained at Promontory, and a few helped lay the last track.  No Chinese workers appear in the iconic East Meets West photo celebrating the connection. A reporter for the San Francisco Newsletter describes one part of the celebration at Promontory ignored by other reporters:
+
+“J.H. Strobridge, when the work was all over, did invite the Chinese who had been brought over from Victory for that purpose, to dine at his boarding car. When they entered, all the guests and officers present cheered them as the chosen representatives of the race which have greatly helped to build the road ... a tribute they well deserved . . .”
+
+![Promontory Summit 2](https://stanford.app.box.com/representation/file_version_157468807517/image_2048/1.png)
+
+Many believed that the Chinese railroad workers achieved an engineering marvel – but it was always at a price. 
+
+The Central Pacific did not keep records of the deaths of any workers on the railroad. A great many men were lost during construction – and most of those workers were Chinese. Some historians estimate from engineering reports, newspaper articles and other sources that between 50 to 150 lives were lost; other estimates go as high as 1,200 or more had Chinese died. 
+
+They were killed as a result of snow slides, landslides, explosions, falls and other accidents, as well as sickness. 
+
+http://bl.ocks.org/anonymous/raw/347afd7b1f7863fe2ad6523643dd602e</script></body></html>
